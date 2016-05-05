@@ -25,4 +25,4 @@ MacHugh, D.E.
 david.machugh [at] ucd [dot] ie
 
 
-DOI badge: https://zenodo.org/badge/21874/carolcorreia/Oestrus-Endometrium-RNA-sequencing.svg
+DOI badge: [![DOI](https://zenodo.org/badge/21874/carolcorreia/Oestrus-Endometrium-RNA-sequencing.svg)](https://zenodo.org/badge/latestdoi/21874/carolcorreia/Oestrus-Endometrium-RNA-sequencing)
