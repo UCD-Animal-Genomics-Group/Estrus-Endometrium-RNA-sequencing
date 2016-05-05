@@ -1,0 +1,292 @@
+########################################################################
+# Oestrus Endometrium paired-end RNA-seq: full bioinformatics pipeline #
+########################################################################
+
+# Last updated: 11/04/2016
+
+# Can't perform md5checksum because I don't have the original values
+# to compare with.
+
+# Change permissions of all fq.gz files in the directory to read
+# and execute only.
+chmod -R 555 /workspace/storage/ccorreia/oestrusEndo
+
+#######################################
+# FastQC quality check of fastq files #
+#######################################
+
+# Required software is FastQC v0.11.5, consult manual/tutorial
+# for details: http://www.bioinformatics.babraham.ac.uk/projects/fastqc/
+
+# Create and enter the quality check output directory:
+mkdir -p /home/ccorreia/scratch/oestrusEndo/quality_check
+### -p creates parent directories
+cd $HOME/scratch/oestrusEndo/quality_check
+
+# Run FastQC in one file to see if it's working well:
+fastqc -o /home/ccorreia/scratch/oestrusEndo/quality_check \
+--noextract --nogroup -t 1 \
+$HOME/storage/oestrusEndo_fastq/endo_12hrPostCIDR_13_1.fq.gz
+
+unzip endo_12hrPostCIDR_13_1_fastqc.zip
+cd endo_12hrPostCIDR_13_1_fastqc
+### All files are here, so I moved this folder to my laptop using WinSCP
+### and checked the HTML report. It worked fine.
+
+# Create a bash script to perform FastQC quality check on all fq.gz files:
+for file in `find $HOME/storage/oestrusEndo_fastq/ -name *fq.gz`; \
+do echo "fastqc --noextract --nogroup -t 1 \
+-o $HOME/scratch/oestrusEndo/quality_check $file" >> fastqc.sh; done;
+
+# Split and run all scripts on Stampede:
+split -d -l 2 fastqc.sh fastqc.sh.
+for script in `ls fastqc.sh.*`
+do
+chmod 755 $script
+nohup ./$script > ${script}.nohup &
+done
+
+# Deleted all the HTML files:
+rm -r *.html
+
+# Check all output from FastQC:
+mkdir $HOME/scratch/oestrusEndo/quality_check/tmp
+
+for file in `ls *_fastqc.zip`; do unzip \
+$file -d /home/ccorreia/scratch/oestrusEndo/quality_check/tmp; done;
+
+for file in `find $HOME/scratch/oestrusEndo/quality_check/tmp \
+-name summary.txt`; do more $file | grep "FAIL" >> fastqc_unfiltered_fail.txt; \
+done
+
+grep -o 'Sequence Duplication Levels' fastqc_unfiltered_fail.txt | wc -l
+grep -o 'Overrepresented sequences' fastqc_unfiltered_fail.txt | wc -l
+grep -o 'Adapter' fastqc_unfiltered_fail.txt | wc -l
+
+
+for file in `find $HOME/scratch/oestrusEndo/quality_check/tmp \
+-name summary.txt`; do more $file | grep "WARN" >> fastqc_unfiltered_warn.txt; \
+done
+
+grep -o 'Overrepresented sequences' fastqc_unfiltered_warn.txt | wc -l
+grep -o 'Adapter' fastqc_unfiltered_warn.txt | wc -l
+
+# Remove temporary folder and its files:
+rm -rf /home/ccorreia/scratch/oestrusEndo/quality_check/tmp
+
+# Tidy the quality control folder up:
+mkdir pre_alignment
+mv endo_* fastqc.* fastqc_* -t pre_alignment/
+
+########################################################################
+# STAR alignment of fast files against the Bos taurus reference genome #
+########################################################################
+
+# Required software is STAR 2.5.1b, consult manual/tutorial for details:
+https://github.com/alexdobin/STAR/blob/master/doc/STARmanual.pdf
+
+# Download Bos taurus reference genome, version UMD3.1.1 from NCBI:
+mkdir /workspace/storage/genomes/bostaurus/UMD3.1.1_NCBI/source_file
+cd /workspace/storage/genomes/bostaurus/UMD3.1.1_NCBI/source_file
+nohup wget -o logfile -r -nd \
+"ftp://ftp.ncbi.nlm.nih.gov/genomes/all/GCF_000003055.6_Bos_taurus_UMD_3.1.1/GCF_000003055.6_Bos_taurus_UMD_3.1.1_genomic.fna.gz" \
+&
+gunzip GCF_000003055.6_Bos_taurus_UMD_3.1.1_genomic.fna.gz
+
+# Download annotation file for UMD3.1.1 NCBI Bos taurus Annotation Release 105:
+mkdir /workspace/storage/genomes/bostaurus/UMD3.1.1_NCBI/annotation_file
+cd /workspace/storage/genomes/bostaurus/UMD3.1.1_NCBI/annotation_file
+wget ftp://ftp.ncbi.nlm.nih.gov/genomes/all/GCF_000003055.6_Bos_taurus_UMD_3.1.1/GCF_000003055.6_Bos_taurus_UMD_3.1.1_genomic.gff.gz
+gunzip GCF_000003055.6_Bos_taurus_UMD_3.1.1_genomic.gff.gz
+
+# Generate genome indexes files using annotations:
+mkdir /workspace/storage/genomes/bostaurus/UMD3.1.1_NCBI/STAR-2.5.1b_index
+cd /workspace/storage/genomes/bostaurus/UMD3.1.1_NCBI/STAR-2.5.1b_index
+
+nohup STAR --runThreadN 20 --runMode genomeGenerate \
+--genomeDir /workspace/storage/genomes/bostaurus/UMD3.1.1_NCBI/STAR-2.5.1b_index \
+--genomeFastaFiles \
+/workspace/storage/genomes/bostaurus/UMD3.1.1_NCBI/source_file/GCF_000003055.6_Bos_taurus_UMD_3.1.1_genomic.fna \
+--sjdbGTFfile /workspace/storage/genomes/bostaurus/UMD3.1.1_NCBI/annotation_file/GCF_000003055.6_Bos_taurus_UMD_3.1.1_genomic.gff \
+--sjdbGTFtagExonParentTranscript Parent --sjdbOverhang 99 \
+--outFileNamePrefix \
+/workspace/storage/genomes/bostaurus/UMD3.1.1_NCBI/STAR-2.5.1b_index/Btau-UMD3.1.1 &
+
+# Create and enter alignment working directory:
+mkdir $HOME/scratch/oestrusEndo/STAR-2.5.1b_alignment
+cd $HOME/scratch/oestrusEndo/STAR-2.5.1b_alignment
+
+# Mapping reads from one fastq file to the genome, to check if it works well:
+nohup STAR --runMode alignReads --runThreadN 20 --genomeLoad LoadAndRemove \
+--genomeDir /workspace/storage/genomes/bostaurus/UMD3.1.1_NCBI/STAR-2.5.1b_index/ \
+--readFilesIn $HOME/storage/oestrusEndo_fastq/endo_12hrPostCIDR_13_1.fq.gz \
+$HOME/storage/oestrusEndo_fastq/endo_12hrPostCIDR_13_2.fq.gz \
+--readFilesCommand gunzip -c \
+--outFilterMultimapNmax 20 --outFilterMismatchNmax 10 \
+--outFileNamePrefix \
+$HOME/scratch/oestrusEndo/STAR-2.5.1b_alignment/endo_12hrPostCIDR_13_ \
+--outSAMattrIHstart 0 --outSAMattributes Standard --outReadsUnmapped Fastx &
+
+# Create a bash script to perform alignment of individual samples fastq files:
+for file in `ls $HOME/storage/oestrusEndo_fastq/*1.fq.gz`; \
+do file2=`echo $file | perl -p -e 's/\_1\.fq\.gz/\_2\.fq\.gz/'`; \
+sample=`basename $file | perl -p -e 's/\_1\.fq\.gz//'`; \
+echo "mkdir $HOME/scratch/oestrusEndo/STAR-2.5.1b_alignment/$sample; \
+cd $HOME/scratch/oestrusEndo/STAR-2.5.1b_alignment/$sample; \
+STAR --runMode alignReads --runThreadN 1 --genomeLoad LoadAndRemove \
+--genomeDir /workspace/storage/genomes/bostaurus/UMD3.1.1_NCBI/STAR-2.5.1b_index/ \
+--readFilesIn $file $file2 --readFilesCommand gunzip -c \
+--outFilterMultimapNmax 20 --outFilterMismatchNmax 10 \
+--outFileNamePrefix ./${sample}_ --outSAMattrIHstart 0 \
+--outSAMattributes Standard --outReadsUnmapped Fastx" >> alignment.sh; done;
+
+# Split and run all scripts on Stampede:
+split -d -l 1 alignment.sh alignment.sh.
+for script in `ls alignment.sh.*`
+do
+chmod 755 $script
+nohup ./$script &
+done
+
+# Check nohup.out file to see how many jobs finished successfully:
+grep -c 'Finished successfully' nohup.out
+
+# Merge all STAR log.final.out files from 31 samples into a single file:
+for file in `find $HOME/scratch/oestrusEndo/STAR-2.5.1b_alignment \
+-name *Log.final.out`; \
+do perl /home/nnalpas/SVN/star_report_opener.pl -report $file; done;
+
+#############################################
+# FastQC quality check of aligned SAM files #
+#############################################
+
+# Required software is FastQC v0.11.5, consult manual/tutorial
+# for details: http://www.bioinformatics.babraham.ac.uk/projects/fastqc/
+
+# Create and go to working directory
+mkdir $HOME/scratch/oestrusEndo/quality_check/post_alignment
+cd $HOME/scratch/oestrusEndo/quality_check/post_alignment
+
+# Create a bash script to perform FastQC quality check on aligned sam files:
+for file in `find $HOME/scratch/oestrusEndo/STAR-2.5.1b_alignment -name *.sam`; \
+do echo "fastqc --noextract --nogroup -t 1 \
+-o $HOME/scratch/oestrusEndo/quality_check/post_alignment $file" >> fastqc_aligned.sh; \
+done;
+
+# Split and run all scripts on Stampede
+split -d -l 2 fastqc_aligned.sh fastqc_aligned.sh.
+for script in `ls fastqc_aligned.sh.*`
+do
+chmod 755 $script
+nohup ./$script &
+done
+
+# Delete all the HTML files:
+rm -r *.html
+
+# Check all output from FastQC:
+mkdir $HOME/scratch/oestrusEndo/quality_check/post_alignment/tmp
+
+for file in `ls *_fastqc.zip`; do unzip \
+$file -d $HOME/scratch/oestrusEndo/quality_check/post_alignment/tmp; \
+done
+
+for file in `find $HOME/scratch/oestrusEndo/quality_check/post_alignment/tmp \
+-name summary.txt`; do more $file | grep "FAIL" >> fastqc_sam_unfiltered_fail.txt; \
+done
+
+grep -o 'Sequence Duplication Levels' fastqc_sam_unfiltered_fail.txt | wc -l
+grep -o 'Overrepresented sequences' fastqc_sam_unfiltered_fail.txt | wc -l
+grep -o 'Adapter' fastqc_sam_unfiltered_fail.txt | wc -l
+
+
+for file in `find $HOME/scratch/oestrusEndo/quality_check/post_alignment/tmp \
+-name summary.txt`; do more $file | grep "WARN" >> fastqc_sam_unfiltered_warn.txt; \
+done
+
+grep -o 'Overrepresented sequences' fastqc_sam_unfiltered_warn.txt | wc -l
+grep -o 'Adapter' fastqc_sam_unfiltered_warn.txt | wc -l
+
+# Move output files and remove temporary folder:
+mv fastqc_sam* -t $HOME/scratch/oestrusEndo/quality_check/post_alignment
+cd $HOME/scratch/oestrusEndo/quality_check/post_alignment
+rm -R tmp/
+
+##########################################################
+# Summarisation count with featureCounts for sense genes #
+##########################################################
+
+# Required package is featureCounts, which is part of Subread 1.5.0-p1 software,
+# consult manual for details:
+# http://bioinf.wehi.edu.au/subread-package/SubreadUsersGuide.pdf
+
+# Create working directories:
+cd $HOME/scratch/oestrusEndo/
+mkdir -p Count_summarisation/sense
+
+# Run featureCounts with one sample to check if it is working fine:
+cd $HOME/scratch/oestrusEndo/STAR-2.5.1b_alignment/endo_12hrPostCIDR_13
+featureCounts -a \
+/workspace/storage/genomes/bostaurus/UMD3.1.1_NCBI/annotation_file/GCF_000003055.6_Bos_taurus_UMD_3.1.1_genomic.gff \
+-B -p -C -R -s 2 -T 5 -F GFF -t gene -g Dbxref -o counts.txt \
+endo_12hrPostCIDR_13_Aligned.out.sam
+
+# Create a bash script to run featureCounts on SAM file containing multihits and
+# uniquely mapped reads using the reversely stranded parameter:
+cd $HOME/scratch/oestrusEndo/Count_summarisation/sense
+
+for file in `find $HOME/scratch/oestrusEndo/STAR-2.5.1b_alignment/ \
+-name *_Aligned.out.sam`; \
+do sample=`basename $file | perl -p -e 's/_Aligned.out.sam//'`; \
+echo "mkdir $HOME/scratch/oestrusEndo/Count_summarisation/sense/$sample; \
+cd $HOME/scratch/oestrusEndo/Count_summarisation/sense/$sample; \
+featureCounts -a \
+/workspace/storage/genomes/bostaurus/UMD3.1.1_NCBI/annotation_file/GCF_000003055.6_Bos_taurus_UMD_3.1.1_genomic.gff \
+-B -p -C -R -s 2 -T 1 -F GFF -t gene -g Dbxref \
+-o ${sample}_sense-counts.txt $file" >> sense_count.sh; done;
+
+# Split and run all scripts on Stampede:
+split -d -l 1 sense_count.sh sense_count.sh.
+for script in `ls sense_count.sh.*`
+do
+chmod 755 $script
+nohup ./$script > ${script}.nohup &
+done
+
+# Merge stats info featureCounts .featureCounts files from 31 samples into
+# a single file:
+for file in `find /$HOME/scratch/oestrusEndo/Count_summarisation/sense/ \
+-name *.featureCounts`; do echo echo \
+"\`basename $file\` \`cut $file -f2 | sort | uniq -c | perl -p -e 's/\n/ /'\` >> \
+annotation_summary_sense.txt" >> annotation_summary_sense.sh
+done
+
+# Run script on Stampede
+split -d -l 6 annotation_summary_sense.sh annotation_summary_sense.sh.
+for script in `ls annotation_summary_sense.sh.*`
+do
+chmod 755 $script
+nohup ./$script &
+done
+
+# Create working directory for R analyses:
+mkdir -p $HOME/scratch/oestrusEndo/edgeR/sense
+
+# Copy all *sense-counts.txt files to laptop to perform subsequent sense genes
+# analyses in R. See: `RNA-seq_paired_sense_mohammed.R`
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
