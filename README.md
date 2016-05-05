@@ -17,6 +17,7 @@ Further README files may be added for each scripts at later date, in order to fa
 For any inquirements concerning our article or repository, please contact:
 
 
+Correia, C.N.
 carolina.correia [at] ucdconnect [dot] ie
 
 or
